@@ -1,6 +1,7 @@
 from torch.utils.data import DataLoader
 from functools import partial
 from utils.collator import custom_collate_fn
+from datasets.spam_instruction import SpamInstructionDataset
 
 def get_data_loaders(train_data, val_data, test_data, tokenizer, device, batch_size=8):
     from datasets.instruction import InstructionDataset
@@ -21,3 +22,15 @@ def get_data_loaders(train_data, val_data, test_data, tokenizer, device, batch_s
                              num_workers=num_workers)
 
     return train_loader, val_loader, test_loader
+
+def get_spam_instruction_loaders(train_path, val_path, test_path, tokenizer, device, batch_size=8):
+    train_ds = SpamInstructionDataset(train_path, tokenizer)
+    val_ds = SpamInstructionDataset(val_path, tokenizer, max_length=train_ds.encoded_texts[0].size(0))
+    test_ds = SpamInstructionDataset(test_path, tokenizer, max_length=train_ds.encoded_texts[0].size(0))
+
+    return (
+        DataLoader(train_ds, batch_size=batch_size, shuffle=True),
+        DataLoader(val_ds, batch_size=batch_size),
+        DataLoader(test_ds, batch_size=batch_size),
+    )
+    
