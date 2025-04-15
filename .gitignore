@@ -1,0 +1,48 @@
+# Ignore all LLM model files and folders
+
+# PyTorch model files
+*.pt
+*.pth
+*.bin
+
+# TensorFlow model files
+*.ckpt
+*.pb
+*.h5
+*.tflite
+
+# Hugging Face Transformers
+*.model
+*.safetensors
+
+# Common model folders
+/checkpoints/
+/models/
+/weights/
+/saved_models/
+/output/
+
+# Temporary or intermediate outputs
+*.tmp
+*.log
+*.jsonl
+*.npy
+*.npz
+
+
+# Ignore Hugging Face cache (optional)
+~/.cache/huggingface/
+
+# Ignore Python bytecode
+*.pyc
+__pycache__/
+.venv/
+
+# Others
+/experiments/gpt2_tuning/gpt2/
+*.zip
+*.csv
+*.tsv
+finetune/experiments/gpt2_tuning/sms_spam_collection/
+merged_files.txt
+code_dump.py
