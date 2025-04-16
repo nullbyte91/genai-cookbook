@@ -57,7 +57,7 @@ The goal is to build a modular, extensible pipeline that supports experimentatio
 
 ## 📚 Appendix (Foundational Concepts)
 ### Archiecture
-1. [The Transformer Architecture](./transformer_archiecture_overview.md)
+1. [The Transformer Architecture](./appendix/transformer_archiecture_overview.md)
 
 ## 🤝 Contributing
 We welcome contributors! See CONTRIBUTING.md for guidelines.
