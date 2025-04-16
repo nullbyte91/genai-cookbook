@@ -16,6 +16,7 @@
    - [3.6 Comprehensive Evaluation](#36-comprehensive-evaluation)
 5. [🚀 Productionization & Operations (LLMOps)](#-productionization--operations-llmops)
 6. [🔍♻️ Continuous Monitoring & Improvement](#-continuous-monitoring--improvement)
+7. [📚 Appendix](#-appendix-foundational-concepts)
 7. [🤝 Contributing](#-contributing)
 8. [📜 License](#-license)
 
@@ -41,8 +42,10 @@ The goal is to build a modular, extensible pipeline that supports experimentatio
 ### 3.4 RAG System Development & Tuning
 ### 3.5 Fine-Tuning
 #### 3.5.1 Dataset Preparation
+
 #### 3.5.2 Training Setup
 #### 3.5.3 Model Initialisation
+
 #### 3.5.4 Selection of Fine-Tuning Technique
 ### 3.6 Comprehensive Evaluation
 
@@ -51,6 +54,10 @@ The goal is to build a modular, extensible pipeline that supports experimentatio
 
 ## 🔍♻️ Continuous Monitoring & Improvement
 *(Coming Soon)*
+
+## 📚 Appendix (Foundational Concepts)
+### Archiecture
+1. [The Transformer Architecture](./transformer_archiecture_overview.md)
 
 ## 🤝 Contributing
 We welcome contributors! See CONTRIBUTING.md for guidelines.
