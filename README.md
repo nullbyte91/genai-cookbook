@@ -79,12 +79,12 @@ The deep learning framework (like PyTorch or TensorFlow) reserves a chunk of mem
 
 
 $$
-\text{param\_memory} =
+\mathrm{param\_memory} =
 \begin{cases}
-4 \text{ bytes,} & \text{FP32} \\
-2 \text{ bytes,} & \text{FP16 or BF16} \\
-1 \text{ byte,} & \text{INT8} \\
-0.5 \text{ bytes,} & \text{NF4 (QLoRA)}
+4~\text{bytes,} & \text{FP32} \\
+2~\text{bytes,} & \text{FP16 or BF16} \\
+1~\text{byte,} & \text{INT8} \\
+0.5~\text{bytes,} & \text{NF4 (QLoRA)}
 \end{cases}
 $$
 
