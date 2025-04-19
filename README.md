@@ -157,8 +157,9 @@ $$
 > **_Note_** The optimizer step completes the cycle. The persistent nature of optimizer states (mos​) highlights the value of memory-efficient optimizers.
 
 $$
-\mathrm{Peak\_GPU\_Memory} \approx m_{\mathrm{base}} + m_p + m_{\mathrm{os}} + \max(m_{\mathrm{out}}, m_g) + c_{\mathrm{up}}
+m_{{\mathrm{after\_update}}} \approx m_{{\mathrm{base}}} + m_p + m_{{\mathrm{os}}} + \max(m_{{\mathrm{out}}}, m_g) + c_{{\mathrm{up}}}
 $$
+
 
 The followed section aims to provide a comprehensive and in-depth overview of the techniques, tools, benchmarks, and best practices for optimizing the fine-tuning process of LLMs, specifically targeting hardware environments with limited compute capacity.
 
