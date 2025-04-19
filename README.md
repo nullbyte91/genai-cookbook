@@ -77,7 +77,6 @@ The deep learning framework (like PyTorch or TensorFlow) reserves a chunk of mem
 * Transformer Layer Weights (other_p - attention, linear layers, normalization)
 * Task-Specific Head (lm_p - language model head, classification head) * The size depends heavily on the model's architecture (depth, width, vocab size) and, crucially, the precision used:
 
-
 $$
 \mathrm{param\_memory} =
 \begin{cases}
@@ -142,6 +141,7 @@ $$
 m_{\text{os}} = P_{\text{train}} \times 8
 $$
 
+
 > **_Note_** Gradient memory (mg​) scales with trainable parameters, making PEFT highly effective here. Optimizer states (mos​) represent a significant, persistent memory cost established early on, making optimizer choice critical.
 
 ##### Phase 5: The Optimizer Step - Updating Weights
@@ -153,13 +153,13 @@ $$
 m_{\text{after\_update}} \approx m_{\text{base}} + m_p + m_{\text{os}} + c_{\text{up}}
 $$
 
+
 > **_Note_** The optimizer step completes the cycle. The persistent nature of optimizer states (mos​) highlights the value of memory-efficient optimizers.
 
 The Final GPU Memory,
 $$
 \text{Peak\_GPU\_Memory} \approx m_{\text{base}} + m_p + m_{\text{os}} + \max(m_{\text{out}}, m_g) + c_{\text{up}}
 $$
-
 
 The followed section aims to provide a comprehensive and in-depth overview of the techniques, tools, benchmarks, and best practices for optimizing the fine-tuning process of LLMs, specifically targeting hardware environments with limited compute capacity.
 
