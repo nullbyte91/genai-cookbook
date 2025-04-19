@@ -33,7 +33,7 @@ tokenized_eval.set_format(type="torch", columns=["input_ids", "attention_mask", 
 
 # Define models to benchmark
 models_to_benchmark = [
-    (model_name, AutoModelForCausalLM.from_pretrained(model_name)),
+    (model_name, AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)),
 ]
 
 # Set up training arguments
