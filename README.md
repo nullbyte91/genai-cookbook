@@ -90,7 +90,7 @@ $$
 3. <b>Memory Padding:</b> Allocators don't usually grab exactly the requested memory. For efficiency (coalesced access, easier management, kernel requirements, MMU alignment), they round up allocations to align with hardware boundaries (like CUDA page sizes). This means some allocated memory might be unoccupied padding, slightly inflating the actual usage beyond the sum of parameter sizes.
 
 $$
-m_{\text{base}} = m_{\text{cuda\_ctx}} + m_{\text{framework}} + m_{\text{libs}}
+m_{\mathrm{base}} = m_{\mathrm{cuda_ctx}} + m_{\mathrm{framework}} + m_{\mathrm{libs}}
 $$
 
 > **_Note_** This initial phase sets a potentially high floor for memory usage, dominated by model parameters (mp​) and framework overhead (mb​ase). Optimizations here involve shrinking the model itself (Quantization, Parameter-Efficient Fine-Tuning - PEFT).
@@ -102,7 +102,7 @@ Now, the training loop begins. Batches of input data (tokenized sequences, often
 2. <b>First Activations:</b> This lookup generates the first set of intermediate results, or activations. Their size is typically bs×sl×hidden_dim, using the compute precision (e.g., FP16/BF16 in mixed-precision).
 
 $$
-m_{\text{embed}} = B \times S \times H \times \text{dtype\_size}
+m_{\mathrm{embed}} = B \times S \times H \times \mathrm{dtype_size}
 $$
 
 > **_Note_**  This marks the start of dynamic memory allocation. Activation memory scales directly with batch size (bs) and sequence length (sl), making these key parameters to tune for memory management.
@@ -116,11 +116,11 @@ The input embeddings flow through the transformer layers (other_p). Each layer c
 Unless gradient checkpointing a optimization techniques is used, all these intermediate activations (mout​) must be kept in memory simultaneously. Why we need them? They are needed during the backward pass to calculate gradients.
 
 $$
-m_{\text{out}} = \sum_{l=1}^{L} A_l
+m_{\mathrm{out}} = \sum_{l=1}^{L} A_l
 $$
 
 $$
-\text{logits\_shape} = B \times S \times V
+\mathrm{logits_shape} = B \times S \times V
 $$
 
 > **_Note_** For deep models, long sequences, or large batches, activation memory (mout​) often becomes the dominant dynamic memory consumer, potentially exceeding parameter or optimizer state memory. Its sheer size makes it the prime target for techniques like Gradient Checkpointing.
@@ -134,11 +134,11 @@ Gradient Computation: The derivative of the loss is calculated with respect to e
 * Variance (v): Second moment estimate (average of past squared gradients). These are usually stored in FP32for numerical stability, even in 
 
 $$
-m_g = P_{\text{train}} \times \text{dtype\_size}
+m_g = P_{\mathrm{train}} \times \mathrm{dtype_size}
 $$
 
 $$
-m_{\text{os}} = P_{\text{train}} \times 8
+m_{\mathrm{os}} = P_{\mathrm{train}} \times 8
 $$
 
 
@@ -150,7 +150,7 @@ The optimizer uses the computed gradients (mg​) and its stored states (mos​)
 2. Memory Fluctuation: Memory usage might slightly decrease after this step if the gradient buffers (mg​) are released (this depends on the framework's memory management). However, the large optimizer state memory (mos​) remains.
 
 $$
-m_{\text{after\_update}} \approx m_{\text{base}} + m_p + m_{\text{os}} + c_{\text{up}}
+m_{\mathrm{after_update}} \approx m_{\mathrm{base}} + m_p + m_{\mathrm{os}} + c_{\mathrm{up}}
 $$
 
 
@@ -158,7 +158,7 @@ $$
 
 The Final GPU Memory,
 $$
-\text{Peak\_GPU\_Memory} \approx m_{\text{base}} + m_p + m_{\text{os}} + \max(m_{\text{out}}, m_g) + c_{\text{up}}
+\mathrm{Peak\_GPU\_Memory} \approx m_{\mathrm{base}} + m_p + m_{\mathrm{os}} + \max(m_{\mathrm{out}}, m_g) + c_{\mathrm{up}}
 $$
 
 The followed section aims to provide a comprehensive and in-depth overview of the techniques, tools, benchmarks, and best practices for optimizing the fine-tuning process of LLMs, specifically targeting hardware environments with limited compute capacity.
