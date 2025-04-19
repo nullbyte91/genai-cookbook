@@ -156,8 +156,6 @@ $$
 
 > **_Note_** The optimizer step completes the cycle. The persistent nature of optimizer states (mos​) highlights the value of memory-efficient optimizers.
 
-The Final GPU Memory,
-
 $$
 \mathrm{Peak\_GPU\_Memory} \approx m_{\mathrm{base}} + m_p + m_{\mathrm{os}} + \max(m_{\mathrm{out}}, m_g) + c_{\mathrm{up}}
 $$
