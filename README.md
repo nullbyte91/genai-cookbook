@@ -483,6 +483,106 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 ```
 #### 3.5.5 Selection of Fine-Tuning Technique
+As you know these models, often pre-trained on vast datasets, exhibit impressive generalization abilities, allowing them to perform tasks not explicitly seen during training, a capability known as zero-shot learning. However, to achieve optimal performance on specific downstream tasks or adapt to particular domains, fine-tuning remains an essential step.
+
+Full fine-tuning demands substantial GPU memory not only for model weights but also for gradients, optimizer states, and intermediate activations, limiting its feasibility, especially outside large industrial labs.
+
+Parameter-Efficient Fine-Tuning (PEFT) methods have emerged as a compelling solution to this challenge.1 PEFT techniques involve adjusting only a small subset of the model's parameters while keeping the vast majority frozen.
+
+Concurrently, techniques based on Reinforcement Learning from Human Feedback (RLHF) and related preference optimization methods like Direct Preference Optimization (DPO) and Odds Ratio Preference Optimization (ORPO) have been developed to align LLM behavior more closely with human expectations and preferences, addressing issues like helpfulness, honesty, and harmlessness.
+
+#### 3.5.5.1 Parameter-Efficient Fine-Tuning (PEFT)
+The motivation for PEFT stems directly from the challenges posed by full fine-tuning of large models. Updating all parameters requires immense computational power and GPU memory to store not only the weights but also the gradients, optimizer states (like momentum and variance in Adam), and forward activations needed for backpropagation. Storing checkpoints for fully fine-tuned models also consumes significant disk space. The memory requirements for full finetuning has been discussed above.
+
+Furthermore, fine-tuning all parameters on smaller, task-specific datasets increases the risk of catastrophic forgetting, where the model loses some of its general capabilities learned during pre-training. PEFT methods mitigate these issues as well.
+
+PEFT techniques can be broadly categorized based on how they achieve parameter efficiency:
+1. <b>Additive Methods:</b> These techniques introduce new, trainable parameters or modules into the pre-trained model architecture while keeping the original weights frozen. 
+* Adapters: Small neural network layers inserted within the existing transformer blocks. 
+
+* Soft Prompts: Methods like Prompt Tuning, Prefix-Tuning, and P-Tuning add trainable embedding vectors to the input or intermediate layers, effectively learning a task-specific prompt or prefix without modifying the base model's weights.
+
+2. <b>Selective Methods:</b> These methods select a small subset of the existing pre-trained model parameters to fine-tune, while freezing the rest. Examples include tuning only specific layers (e.g., the final transformer blocks) 3 or specific parameter types like bias vectors (BitFit).
+
+3. <b>Reparameterization Methods:</b> These techniques re-parameterize the model's weight matrices, often using low-rank representations to approximate the weight updates. The most prominent example is Low-Rank Adaptation (LoRA).
+
+#### 3.5.5.1.1 Additive Methods - Adapters
+Adapters represent one of the earliest and foundational additive PEFT methods. The core idea is to insert small, task-specific trainable modules into a frozen pre-trained model, typically within each layer of the Transformer architecture. This is similar to how we fine tune deeplearning for computer vision task. 
+
+It works as follows:
+1. Down-projection: Shrinks the high-dimensional input vector from size d to a smaller size r.
+2. Activation: Applies a non-linear function (like ReLU or GELU).
+3. Up-projection: Expands the vector back from size r to size d.
+4. Residual connection: Adds the adapter output back to the original input, so the final output is close to the original plus a small learned update.
+5. Only the adapter's weights (W_{down}, W_{up}) are trained during fine-tuning. The rest of the model stays frozen.
+
+Given an input x, the adapter module computes:
+
+$$
+\text{Adapter}(x) = W_{\text{up}} \cdot \sigma(W_{\text{down}} \cdot x) + x
+$$
+
+---
+
+![alt text](./media/adapter.png "Adapter")
+
+
+```python
+class Adapter(nn.Module):
+    def __init__(self, d_model, bottleneck_dim):
+        super().__init__()
+        self.down_proj = nn.Linear(d_model, bottleneck_dim)
+        self.activation = nn.ReLU()  # or GELU
+        self.up_proj = nn.Linear(bottleneck_dim, d_model)
+
+    def forward(self, x):
+        return self.up_proj(self.activation(self.down_proj(x)))
+```
+
+```python
+# Transformer block with adapter
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = MultiHeadAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"], 
+            dropout=cfg["drop_rate"],
+            qkv_bias=cfg["qkv_bias"]
+        ).
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
+
+        # Add adapters inside residuals
+        self.adapter_attn = Adapter(cfg["emb_dim"], cfg["adapter_dim"])
+        self.adapter_ffn = Adapter(cfg["emb_dim"], cfg["adapter_dim"])
+
+    def forward(self, x):
+        # ---- Attention block ----
+        shortcut = x
+        x_norm = self.norm1(x)
+        attn_out = self.att(x_norm)
+        attn_out = self.drop_shortcut(attn_out)
+        x = shortcut + self.adapter_attn(attn_out)
+
+        # ---- FFN block ----
+        x_norm = self.norm2(x)
+        ff_out = self.ff(x_norm)
+        ff_out = self.drop_shortcut(ff_out)
+        x = shortcut + self.adapter_ffn(ff_out)
+
+        return x
+```
+
+<b>Placement Variants is also matters:</b>
+Adapters can be inserted at different locations within a Transformer block. The original "Serial Adapter" approach placed adapters after both the multi-head self-attention (MSA) and feedforward network (FFN) sublayers.
+
+To improve efficiency, variations like AdapterFusion proposed inserting adapters only after the FFN layer. Parallel Adapter (PA) approaches organize adapters into a side-network running alongside the main transformer sublayers, potentially improving computational parallelism. Specific parallel designs include CIAT, CoDA (which uses sparse activation for efficiency), and KronA.
+
 
 #### 3.5.6 Practical Examples
 1. [Fine-Tuning GPT-2 for AG News Classification](./finetune/experiments/gpt2_ag_news_classifier/README.md)
