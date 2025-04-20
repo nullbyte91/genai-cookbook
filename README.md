@@ -923,7 +923,6 @@ def add_adapters_to_model(model, adapter_dim):
 - **Trainable Parameters**: ~6M (~1.7% of total)
 
 ---
-
 #### Exact Differences
 
 | Metric                    | Full Fine-Tune         | Adapter Fine-Tune      | Difference                        |
@@ -952,6 +951,89 @@ def add_adapters_to_model(model, adapter_dim):
 
 ---
 
+#### 3.5.5.1.2 Reparametrization Methods - LoRA
+Low-Rank Adaptation (LoRA) has become one of the most widely adopted and effective PEFT methods, falling under the reparameterization category.
+
+LoRA is based on an important observation:
+> **_Note_** The changes needed to adapt a pre-trained model to a new task often lie in a small subspace of the model’s weight space.
+
+In other words:
+
+We don’t need to update the full weight matrix $W \in \mathbb{R}^{d \times k}$.
+
+Instead, we learn a low-rank matrix  
+$\Delta W = B \cdot A$, where:
+
+- $A \in \mathbb{R}^{r \times k}$
+- $B \in \mathbb{R}^{d \times r}$
+
+with $r \ll d$. This means instead of updating millions of parameters, we only train a few thousand, and still get excellent performance.
+
+
+$$
+y = (W + \Delta W) \cdot x = \left(W + \frac{\alpha}{r} \cdot B A\right) x
+$$
+
+For example,
+
+![image info](./media/lora_1.png)
+![image info](./media/lora_2.png)
+![image info](./media/lora_3.png)
+
+[Reference](https://learning.oreilly.com/library/view/hands-on-large-language/9781098150952/ch12.html#full_fine_tuning)
+
+We want to approximate a 10×10 weight matrix W with a low-rank update:
+ΔW = B × A
+Where:
+A ∈ ℝ^(r × 10)
+B ∈ ℝ^(10 × r)
+So ΔW ∈ ℝ^(10 × 10) (same shape as W)
+r = rank (e.g., 1 or 2)
+LoRA Need only 20 parameters to update the downstream task which is not the case in 
+ful finetuning.
+
+<b> Rationale: </b>
+Larger models already know a lot — they’ve seen huge amounts of data. So fine-tuning isn’t about learning from scratch, but rather about re-weighting or combining the features they already learned. That kind of adaptation can be done through a small set of directions in weight space — a low-rank update.
+
+> **_Note_**  This is called the low intrinsic dimensionality hypothesis:
+Even though the model’s full parameter space is huge, the directions that matter for fine-tuning live in a much smaller subspace.
+
+And that’s exactly what LoRA captures with the low-rank matrix.
+
+The matrix A is typically initialized using a random Gaussian distribution, while B is initialized with zeros. This ensures that at the beginning of training, ΔW=BA=0, and the adapted model starts identically to the pre-trained model.
+
+##### Hyperparameters
+The rank, denoted by r, is a crucial hyperparameter in LoRA. It defines the inner dimension of the two low-rank decomposition matrices, A (size d×r) and B (size r×k).
+The rank r directly controls the number of trainable parameters within the LoRA adapter and, consequently, its representational capacity or expressiveness.11 A higher rank introduces more trainable parameters, theoretically allowing the adapter to capture more complex nuances of the fine-tuning task or learn more significant deviations from the base model's behavior. but, 
+Increasing the rank r leads to higher memory consumption (for storing the adapter weights, gradients, and optimizer states) and increased computational cost during training.
+
+Common choices for r in practice include values like 8, 16, 32, 64, or 128.4 Heuristics suggest using lower ranks (e.g., 8-16) for simpler adaptation tasks where the goal is primarily to align the model with a specific style or narrow domain, and higher ranks (e.g., 32-128) when the model needs to learn substantially new concepts or adapt to highly complex tasks.33 However, empirical validation is often necessary to determine the optimal rank for a given scenario.11 It is important to note that performance does not necessarily improve monotonically with rank; studies have shown that performance can plateau or even degrade beyond a certain rank.73 This phenomenon of rank saturation or degradation implies that simply increasing r is not always beneficial. Potential reasons include overfitting 11, the possibility that the required adaptation is inherently low-rank 77, instability caused by interactions with the scaling factor alpha, or the introduction of "intruder dimensions" that may harm generalization.
+
+
+---
+LoRA alpha (lora_alpha), denoted by α, is a hyperparameter that acts as a scaling factor for the update computed by the LoRA adapter matrices (BA). Alpha controls the magnitude of the adaptation applied by the LoRA layers relative to the output of the frozen base model weights.11 A higher value of alpha gives more weight to the learned LoRA update, effectively increasing the influence of the fine-tuning process.
+
+A widely adopted heuristic is to set alpha as a simple function of the rank r. Commonly, alpha is set to be equal to r or twice r (i.e., α=r or α=2r).4 Some practitioners prefer to fix alpha to a constant value (e.g., 16 or 32) and primarily tune the rank r.Variants like rank-stabilized LoRA (rsLoRA) aim to automatically adjust the effective scaling based on the rank, potentially simplifying tuning.
+
+Alpha and rank are closely intertwined.52 Since the effective scaling often involves both α and r (e.g., α/r), changing one without adjusting the other alters the contribution of the LoRA update. The common practice of setting α relative to r (e.g., α=2r) suggests an attempt to normalize the update magnitude. With the original α/r scaling, setting α=r yields a scaling factor of 1, while α=2r yields 2.
+
+---
+The target_modules parameter in LoRA configuration specifies which layers or types of modules within the base LLM architecture will have LoRA adapters injected. Only the parameters of the original weights within these targeted modules are frozen; LoRA matrices A and B are added alongside them. 
+
+In Transformer-based LLMs, the most common targets for LoRA adaptation are the linear projection layers within the self-attention mechanism. These typically include the query (q_proj), key(k_proj), value (v_proj), and output (o_proj) projections.35 Additionally, the linear layers within the feed-forward (or MLP) blocks (gate_proj, up_proj, down_proj) are also frequently targeted.
+
+Applying LoRA to more modules increases the total number of trainable parameters (for a fixed rank r) and allows the fine-tuning process to influence more parts of the model's computation, potentially leading to more comprehensive adaptation and better performance. However, targeting more modules also slightly increases the memory footprint and computational overhead of the adapters. Targeting only a subset of layers (e.g., just the query and value projections as in the original LoRA paper) can be more efficient but might limit the model's ability to adapt fully to the task.
+
+---
+Similar to standard dropout, lora_dropout applies dropout regularization specifically within the LoRA adapter layers, typically after the first matrix (A) and before the second (B). Its purpose is to prevent the relatively small number of adapter parameters from overfitting the fine-tuning data. Common values might be 0.05 or 0.1.34 However, some implementations or guides suggest setting lora_dropout=0, especially if using optimized kernels or if overfitting is not observed, potentially for faster training.
+
+---
+The bias parameter in LoRA configurations controls whether bias terms in the adapted layers are trained. Options typically include 'none' (no biases trained), 'all' (all biases in target modules trained), or 'lora_only' (only biases added by LoRA trained). Setting bias="none" is often recommended for efficiency and potentially reducing overfitting, as it further minimizes the number of trainable parameters.
+
+---
+Advanced techniques like LoftQ (Low-rank plus Full-rank Quantization-aware Training) can be used to initialize the LoRA matrices. LoftQ initializes the LoRA matrices based on the top singular vectors of the original weight matrices, which can potentially lead to slightly better accuracy. However, this initialization process itself can be memory-intensive at the start of training.
+
+
 #### 3.5.6 Practical Examples
 1. [Fine-Tuning GPT-2 for AG News Classification](./finetune/experiments/gpt2_ag_news_classifier/README.md)
 2. [Fine-Tuning GPT-2 for code generation](./finetune/experiments/gpt2_py_code_generation/README.md)
@@ -972,6 +1054,8 @@ def add_adapters_to_model(model, adapter_dim):
 ### Finetune
 1. [Data Preparation Guide by Unsloth](https://docs.unsloth.ai/basics/datasets-guide)
 2. [LLMDataHub](https://github.com/Zjh-819/LLMDataHub)
+3. [Scaling Down to Scale Up: A Guide to Parameter-Efficient Fine-Tuning](https://arxiv.org/pdf/2303.15647)
+
 
 ### General
 1. [awesome-llms-fine-tuning repo 1](https://github.com/Curated-Awesome-Lists/awesome-llms-fine-tuning)
