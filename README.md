@@ -703,6 +703,254 @@ Adapters can be inserted at different locations within a Transformer block. The 
 
 To improve efficiency, variations like AdapterFusion proposed inserting adapters only after the FFN layer. Parallel Adapter (PA) approaches organize adapters into a side-network running alongside the main transformer sublayers, potentially improving computational parallelism. Specific parallel designs include CIAT, CoDA (which uses sparse activation for efficiency), and KronA.
 
+---
+To illustrate the difference between full fine-tuning and adapter-based fine-tuning, let’s walk through a real example using GPT-2 Medium and the CodeAlpaca-20K dataset.
+
+The full fine-tuning code loads the entire GPT-2 model and updates all model parameters, including attention, feedforward layers, and embeddings.
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_name = "gpt2-medium"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Tokenizer padding
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+```
+
+In the adapter-based fine-tuning setup, we do not update the full model. Instead, we insert small adapter modules within each transformer block.
+
+```python
+class AdapterLayer(torch.nn.Module):
+    """
+    Implementation of an adapter layer for transformer models.
+    input_dim: Dimension of the hidden state (e.g., 1024 in GPT2-Medium).
+    adapter_dim: Bottleneck size — much smaller than input_dim, e.g., 64 or 128.
+    dropout_rate: Dropout for regularization.
+    """
+    def __init__(self, input_dim, adapter_dim, dropout_rate=0.1):
+        super(AdapterLayer, self).__init__()
+        
+        # Down-projection
+        self.down_proj = torch.nn.Linear(input_dim, adapter_dim)
+        
+        # Non-linearity (GELU)
+        self.activation = torch.nn.GELU()
+        
+        # Up-projection
+        self.up_proj = torch.nn.Linear(adapter_dim, input_dim)
+        
+        # Layer normalization for stability
+        self.layer_norm = torch.nn.LayerNorm(input_dim)
+        
+        # Dropout for regularization
+        self.dropout = torch.nn.Dropout(dropout_rate)
+        
+        # Initialize weights
+        self._init_weights()
+        
+        # Make sure parameters require gradients
+        for param in self.parameters():
+            param.requires_grad = True
+    
+    def _init_weights(self):
+        """Initialize weights for stability."""
+        # Initialize down projection with small values
+        torch.nn.init.normal_(self.down_proj.weight, std=1e-3)
+        torch.nn.init.zeros_(self.down_proj.bias)
+        
+        # Initialize up projection with zeros for residual stability
+        torch.nn.init.zeros_(self.up_proj.weight)
+        torch.nn.init.zeros_(self.up_proj.bias)
+    
+    def forward(self, x):
+        """Forward pass with residual connection."""
+        # Save residual
+        residual = x
+        
+        # Ensure x is on the same device as our parameters
+        device = next(self.parameters()).device
+        if x.device != device:
+            x = x.to(device)
+            residual = residual.to(device)
+        
+        # Apply layer normalization
+        x = self.layer_norm(x)
+        
+        # Down-projection
+        x = self.down_proj(x)
+        
+        # Activation
+        x = self.activation(x)
+        
+        # Dropout for regularization
+        x = self.dropout(x)
+        
+        # Up-projection
+        x = self.up_proj(x)
+        
+        # Residual connection
+        return residual + x
+```
+
+The below function, 
+* Freezes all original model parameters to prevent full fine-tuning.
+* Inserts lightweight adapter modules after the attention and MLP blocks inside each Transformer layer.
+* Overrides the original forward functions to include adapter computation.
+* Ensures proper device placement and parameter tracking.
+* Returns a modified model with only the adapters as trainable components.
+
+```python
+def add_adapters_to_model(model, adapter_dim):
+    """
+    Add adapter layers to a GPT-2 model properly with correct device placement.
+    
+    Args:
+        model: The GPT-2 model
+        adapter_dim: Dimension of the adapter bottleneck
+    
+    Returns:
+        Modified model with adapters
+    """
+    # Determine the device the model is on
+    device = next(model.parameters()).device
+    print(f"Model is on device: {device}")
+    
+    # Freeze all parameters in the original model
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # Get the hidden size from the model config
+    hidden_size = model.config.hidden_size
+    
+    # Create a container to hold our adapters so they remain in memory
+    if not hasattr(model, 'adapters'):
+        model.adapters = {}
+    
+    # Add adapters to each transformer block
+    for i, block in enumerate(model.transformer.h):
+        # Create and attach the adapters to the model to ensure they're tracked
+        attn_adapter_name = f"adapter_attn_{i}"
+        mlp_adapter_name = f"adapter_mlp_{i}"
+        
+        # Create adapters and make sure their parameters require gradients
+        attn_adapter = AdapterLayer(hidden_size, adapter_dim).to(device)
+        mlp_adapter = AdapterLayer(hidden_size, adapter_dim).to(device)
+        
+        # Store adapters in the model
+        model.adapters[attn_adapter_name] = attn_adapter
+        model.adapters[mlp_adapter_name] = mlp_adapter
+        
+        # Create closures that correctly capture the adapters
+        def make_attn_forward(orig_forward, adapter):
+            def new_forward(self, *args, **kwargs):
+                output = orig_forward(*args, **kwargs)
+                # Check if the output is on the same device as the adapter
+                if output[0].device != next(adapter.parameters()).device:
+                    print(f"Warning: Device mismatch - output: {output[0].device}, adapter: {next(adapter.parameters()).device}")
+                
+                # Apply adapter to the output
+                modified_output = adapter(output[0])
+                # Return as a tuple like the original output
+                return (modified_output,) + output[1:]
+            return new_forward
+        
+        def make_mlp_forward(orig_forward, adapter):
+            def new_forward(self, x):
+                output = orig_forward(x)
+                # Check if the output is on the same device as the adapter
+                if output.device != next(adapter.parameters()).device:
+                    print(f"Warning: Device mismatch - output: {output.device}, adapter: {next(adapter.parameters()).device}")
+                
+                # Apply adapter to the output
+                return adapter(output)
+            return new_forward
+        
+        # Store original forward methods
+        original_attn_forward = block.attn.forward
+        original_mlp_forward = block.mlp.forward
+        
+        # Apply the new forward methods with proper closure scope
+        block.attn.forward = make_attn_forward(
+            original_attn_forward, 
+            model.adapters[attn_adapter_name]
+        ).__get__(block.attn)
+        
+        block.mlp.forward = make_mlp_forward(
+            original_mlp_forward, 
+            model.adapters[mlp_adapter_name]
+        ).__get__(block.mlp)
+    
+    # Register adapters as proper modules to ensure they're tracked
+    for name, adapter in model.adapters.items():
+        model.add_module(name, adapter)
+    
+    # Count trainable parameters
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    all_params = sum(p.numel() for p in model.parameters())
+    
+    print(f"Trainable parameters: {trainable_params:,} ({trainable_params/all_params:.2%} of total)")
+    
+    return model
+```
+
+##### Full Fine-Tuning
+
+| Step | Training Loss | Eval Loss |
+|------|---------------|-----------|
+| 250  | 1.049         | 0.885     |
+| 500  | 0.828         | 0.779     |
+| 750  | 0.781         | 0.734     |
+| 1000 | 0.710         | 0.717     |
+
+- **Training Time**: 41 minutes 39 seconds  
+- **Trainable Parameters**: ~355M (100% of model)
+
+---
+
+##### Adapter Fine-Tuning
+
+| Step | Training Loss | Eval Loss |
+|------|---------------|-----------|
+| 250  | 1.114         | 0.936     |
+| 500  | 0.901         | 0.830     |
+| 750  | 0.846         | 0.782     |
+| 1000 | 0.788         | 0.755     |
+
+- **Training Time**: 33 minutes 14 seconds  
+- **Trainable Parameters**: ~6M (~1.7% of total)
+
+---
+
+#### Exact Differences
+
+| Metric                    | Full Fine-Tune         | Adapter Fine-Tune      | Difference                        |
+|--------------------------|------------------------|------------------------|-----------------------------------|
+| **Final Training Loss**  | 0.710                  | 0.788                  | +0.078 (Adapter is slightly worse) |
+| **Final Eval Loss**      | 0.717                  | 0.755                  | +0.038 (Adapter is slightly worse) |
+| **Training Time**        | 41 min 39 sec          | 33 min 14 sec          | −8 min 25 sec (~20% faster)       |
+| **Trainable Parameters** | ~355M                  | ~6M                    | −98.3% (vastly fewer updated weights) |
+
+##### Observation
+- **Slightly Higher Loss in Adapter Tuning**  
+  - Adapters update only ~1.7% of the model. Slight performance gap is expected.
+  - The gap (~0.038 in eval loss) is **very small** and often negligible in downstream tasks.
+
+- **Faster Training Time**  
+  - Fewer parameters → fewer gradients → less memory and compute.
+  - Adapter training was ~8.5 minutes faster (20% improvement).
+
+- **Efficient Resource Usage**  
+  - Adapter fine-tuning avoids the overhead of storing all gradient and optimizer states.
+  - Ideal for low-resource setups and multi-task use cases.
+
+
+[Want to try out - Full fine-tune code](./finetune/experiments/peft/01.full_finetuning.ipynb)<br>
+[Want to try out - Adapter fine-tune code](./finetune/experiments/peft/02.adapter.ipynb)
+
+---
 
 #### 3.5.6 Practical Examples
 1. [Fine-Tuning GPT-2 for AG News Classification](./finetune/experiments/gpt2_ag_news_classifier/README.md)
