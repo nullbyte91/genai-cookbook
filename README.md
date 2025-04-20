@@ -1033,6 +1033,7 @@ The bias parameter in LoRA configurations controls whether bias terms in the ada
 ---
 Advanced techniques like LoftQ (Low-rank plus Full-rank Quantization-aware Training) can be used to initialize the LoRA matrices. LoftQ initializes the LoRA matrices based on the top singular vectors of the original weight matrices, which can potentially lead to slightly better accuracy. However, this initialization process itself can be memory-intensive at the start of training.
 
+[Want to try out - Adapter fine-tune code](./finetune/experiments/peft/03.LoRA.ipynb)
 
 #### 3.5.6 Practical Examples
 1. [Fine-Tuning GPT-2 for AG News Classification](./finetune/experiments/gpt2_ag_news_classifier/README.md)
