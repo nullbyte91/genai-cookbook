@@ -62,6 +62,121 @@ The choice of the base LLM significantly impacts the application's capabilities,
 ---
 #### 3.5.2 Training Setup
 ---
+#### 3.5.2 Training Setup
+---
+#### 3.5.2.1 Hyperparameter Selection
+The success of this fine-tuning process is critically dependent on the judicious selection and configuration of hyperparameters.Hyperparameters are external configuration settings that govern the learning process itself.
+
+These settings act as control knobs, dictating how the model adapts its pre-existing knowledge to the new task or data distribution.
+
+The choice of hyperparameters exerts a profound influence on the outcome of fine-tuning. <b>Inappropriate settings can lead to a cascade of undesirable effects, including model instability during training, failure to converge, slow convergence, or poor generalization characterized by overfitting (excelling on training data but failing on unseen data) or underfitting (failing to capture essential patterns even in the training data).</b> Consequently, meticulous hyperparameter tuning is not merely an optional refinement but a fundamental requirement for achieving optimal performance and reliable behavior in fine-tuned LLMs.
+
+#### Dictionary of Core Fine-Tuning Hyperparameters
+##### Learning Rate (LR):
+The learning rate (LR), typically denoted by α, is arguably the most critical hyperparameter in gradient-based optimization. It is a scalar value that determines the step size taken during each iteration of the training process as the model attempts to minimize the loss function.
+
+$$
+\mathrm{w}_{t+1} = \mathrm{w}_t - \alpha \nabla L(\mathrm{w}_t)
+$$
+
+where wt​ represents the model weights at iteration t, and ∇L(wt​) is the gradient of the loss function with respect to those weights. The LR scales the magnitude of the adjustment made based on the gradient direction.
+
+Setting the <b>LR too high</b> can cause the optimization process to become unstable, leading to oscillating loss values, divergence (where the loss increases indefinitely), or overshooting the optimal weight configuration.
+
+setting the LR too low results in excessively slow convergence, potentially requiring an impractical number of training iterations, or causing the model to become trapped in suboptimal local minima, leading to underfitting.
+
+<b>Practical Tips </b>
+A common heuristic is to employ smaller learning rates during fine-tuning compared to those used during the initial pre-training phase. This practice is primarily motivated by the need to avoid catastrophic forgetting. 
+
+A large LR permits substantial weight adjustments based on the fine-tuning data, potentially disrupting the carefully learned representations from pre-training. A smaller LR encourages more subtle adjustments, aiming to preserve the valuable pre-trained knowledge while gently guiding the model towards proficiency on the specific downstream task. This highlights a fundamental tension in fine-tuning: balancing adaptation to new specifics against the preservation of general capabilities. However, recent investigations into supervised fine-tuning (SFT) of smaller LLMs suggest a more complex interplay, where larger batch sizes might necessitate lower learning rates for optimal performance
+
+<b>Common LR values for fine-tuning LLMs often fall within the range of 1×10−4 to 5×10−6.</b> The optimal value is highly dependent on the chosen optimizer (e.g., AdamW, Adafactor), the specific model architecture and size, and the nature of the fine-tuning task and dataset. A practical starting approach might involve selecting a value from the lower end of the typical range and gradually increasing it if convergence proves too slow, or starting slightly higher within the range and reducing it if instability is observed. It is standard practice to use dynamic learning rate schedules rather than a fixed LR throughout training.
+
+
+##### Batch Size (BS): Gradient Quality, Computational Trade-offs, and Memory Implications:
+The batch size (BS) refers to the number of training examples processed simultaneously in a single forward and backward pass through the model before the optimizer performs a weight update.
+
+The size of the batch influences the quality of the gradient estimate used for weight updates. Larger batch sizes compute the gradient over more samples, providing a more accurate approximation of the true gradient across the entire dataset. This leads to more stable updates with lower variance (less noise). Smaller batch sizes yield noisier gradient estimates.
+
+Imagine you're trying to estimate the average height of people in a city:
+* If you sample 10 people, your estimate is noisy.
+* If you sample 1000 people, your estimate is more stable and accurate.
+
+Same with gradients:
+* Larger batches (e.g., 512 samples): Average the gradient over many samples → Low variance, more stable updates.
+* Smaller batches (e.g., 4 samples): Gradient is noisy because it's based on fewer examples → High variance, more fluctuation.
+
+Batch size is a primary determinant of Graphics Processing Unit (GPU) memory (VRAM) consumption during training. This is largely due to the need to store the intermediate activations for each sample in the batch during the forward pass, which are required for gradient computation during the backward pass. I explained 
+this part in the memory optimization Strategies.
+
+So, </b>There direct link between batch size and VRAM makes it a critical hyperparameter constrained by the available hardware.</b>
+
+Also, Batch size has a strong interplay with the learning rate. Larger batch sizes often permit or even require larger learning rates initially, while smaller, noisier batches typically necessitate smaller learning rates for stability. Furthermore, the technique of <b>Gradient Accumulation</b> is frequently employed to circumvent VRAM limitations, allowing the simulation of large effective batch sizes by accumulating gradients over multiple smaller "micro-batches" before performing a weight update.
+
+[Good Read](https://arxiv.org/pdf/2412.13337v1)
+
+##### Optimization Algorithms
+Optimizers are algorithms that adaptively modify attributes of the learning process, such as the learning rate, for different parameters based on the history of gradients observed during training. Their goal is to guide the model weights towards a configuration that minimizes the loss function more efficiently and effectively than standard stochastic gradient descent (SGD). Methods like AdamW and Adafactor utilize estimates of the first moment (momentum) and second moment (adaptive scaling) of the gradients.
+
+<b>AdamW</b>: 
+AdamW (Adam with Decoupled Weight Decay) is currently one of the most widely adopted optimizers for training deep neural networks, including LLMs.17 It builds upon the Adam optimizer but modifies the handling of L2 regularization (weight decay). Instead of incorporating the weight decay term into the gradient calculation (as in Adam with L2 regularization), AdamW applies it directly to the weights after the gradient-based update step.
+
+However, AdamW is memory-intensive. It typically requires storing two auxiliary variables (estimates of the first and second moments) for each model parameter, usually in 32-bit precision (FP32). This translates to approximately 8 bytes of additional memory per parameter, which can amount to substantial VRAM consumption for billion-parameter models. Memory-reduced variants, such as 8-bit AdamW (using quantization for optimizer states)  and paged AdamW (offloading to CPU RAM), have been developed to mitigate this. I also explained this part in upcoming section.
+
+<b>Adafactor</b>: 
+Adafactor was proposed as a memory-efficient alternative to AdamW, particularly suitable for large models. Its key innovation lies in avoiding the storage of the full second moment estimate for every parameter. Instead, it maintains only aggregated or factorized statistics (e.g., row-wise and column-wise sums of squared gradients or using techniques like Non-negative Matrix Factorization). This significantly reduces the memory footprint, requiring only slightly more than 4 bytes per parameter in some configurations
+
+Assume you're optimizing this weight matrix:
+```python
+W = torch.randn(4, 4)  # 4x4 layer
+```
+AdamW stores:
+m: 4x4 → 16 floats
+v: 4x4 → 16 floats
+➜ Total = 32 floats extra
+
+Adafactor stores:
+row_stats: 4 → 4 floats
+col_stats: 4 → 4 floats
+➜ Total = 8 floats instead of 32
+
+Now, during the update:
+Instead of using v[i][j] directly
+You approximate it as:
+```python
+v_approx[i][j] = row_stats[i] * col_stats[j]
+```
+
+AdamW is generally considered robust and often achieves good convergence across various tasks. Adafactor, while offering significant memory savings, may sometimes exhibit slightly slower convergence or require more careful tuning of its own hyperparameters (like learning rate schedule and momentum settings) compared to AdamW.
+
+Newer optimizers like Lion and Sophia have also been proposed, sometimes demonstrating competitive or superior performance in specific contexts, often with different memory profiles. Research into optimizers like FOCUS or simpler adaptive methods like Adalayer suggests that adaptivity might be most critical for specific parameter groups (e.g., layer normalization, output layer) in LLMs, opening avenues for further optimization research.
+
+##### Learning Rate Schedulers (Cosine, Linear, Warmup)
+Learning rate schedulers dynamically adjust the learning rate value over the course of pre-training or fine-tuning, rather than keeping it constant. This dynamic adjustment is crucial for balancing efficient learning with stable convergence and achieving optimal final model performance.
+
+<span style="color:Olive">
+A fixed learning rate is rarely the best strategy for training complex models like LLMs.
+</span>
+
+<b>Warmup Phase:</b> A nearly ubiquitous component of LR schedules for LLM training is the warmup phase. During warmup, the learning rate starts at a very small value (often close to zero) and gradually increases, typically linearly, to its target maximum value over a predefined number of initial training steps (specified either as an absolute number of steps or a ratio of total steps).  This initial ramp-up period is critical for stabilizing the training process, especially in the early stages where the model's initial state might be far from optimal, leading to large and potentially noisy gradients.
+
+Adaptive optimizers like AdamW can be sensitive to such large initial gradients, and warmup prevents potential divergence or erratic behavior by allowing the optimizer's internal state (e.g., momentum estimates) to adapt gradually before the full learning rate is applied. 
+
+<span style="color:Olive">
+A typical warmup duration might span 5-10% of the total training steps 33 or a fixed number like 25, 100, 500, or 1000 steps.
+</span>
+
+<b>Decay Schedules:</b>
+Following the warmup phase, the learning rate typically undergoes a decay phase, gradually decreasing towards a minimum value (often zero) over the remaining training duration. Common decay strategies include:
+1. <b>Linear Decay:</b> The learning rate decreases linearly from its maximum value post-warmup down to the minimum value. This is a simple and frequently used schedule, mentioned, for instance, in the context of BERT training.
+
+2. <b>Cosine Decay (Cosine Annealing):</b>  The learning rate follows the shape of a cosine curve, decreasing from the maximum to the minimum value. A key characteristic is that it maintains a relatively high learning rate for a longer portion of the decay phase before smoothly decreasing more rapidly towards the end. This schedule, sometimes used with "warm restarts" where the cycle repeats, has been popular for pre-training large models like BLOOM and Llama 3. 
+
+<span style="color:Olive">
+While cosine schedules are prevalent in pre-training, the optimal choice for fine-tuning might depend on the specific context. The aforementioned research suggesting constant LR after warmup might be sufficient for SFT with large batches 2 implies that the complexity of the decay phase might be less critical if gradients are already stabilized by the batch size. This could potentially simplify the hyperparameter search, focusing primarily on the warmup duration and the peak LR. However, linear or cosine decay remain safe and standard choices.
+</span>
+---
+
 #### 3.5.3 Model Initialisation
 ---
 #### 3.5.4 Memory Optimization Strategies
@@ -183,6 +298,11 @@ training_args = TrainingArguments(
 ---
 #### 3.5.5.2 Gradient Accumulation
 Gradient accumulation is a technique used to compute gradients in smaller chunks rather than processing the entire batch at once. In this method, the model performs forward and backward passes on smaller mini-batches, accumulating the gradients over several iterations. Once the desired number of mini-batches has been processed, the optimizer updates the model parameters. This approach allows the use of larger effective batch sizes than what the GPU memory can typically handle. However, it's worth noting that the extra forward and backward passes required for accumulation can lead to slower training times.
+
+> **_IMPORTANT_** Its also a hyperparameter used for improving your fine-tuning task. </b>The primary motivation for using gradient accumulation is to simulate the effect of training with a larger batch size than can physically fit into the GPU memory at once.</b>
+
+The "effective batch size" achieved is the product of the per-device batch size (micro-batch size) and the number of gradient accumulation steps: Effective_Batch_Size = per_device_train_batch_size * gradient_accumulation_steps. This technique allows practitioners to leverage the potential benefits of large batch training (e.g., more stable gradients, potentially better performance as suggested by recent SFT research) even when using hardware with limited VRAM.38 It is often a necessary technique for fine-tuning large LLMs or achieving very large effective batch sizes on standard GPUs.
+
 
 ```python
 training_args = TrainingArguments(
